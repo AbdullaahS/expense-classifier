@@ -1,89 +1,74 @@
 import anthropic
 import csv
-import json
+from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side
 import sys
 
 client = anthropic.Anthropic()
 
 def categorize_expenses(expenses_text):
-    """Send expenses to Claude for categorization"""
-    try:
-        message = client.messages.create(
-            model="claude-opus-4-20250514",
-            max_tokens=500,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Categorize these expenses: {expenses_text}"
-                }
-            ]
-        )
-        return message.content[0].text
-    except Exception as e:
-        return f"Error: {str(e)}"
+    message = client.messages.create(
+        model="claude-opus-4-20250514",
+        max_tokens=500,
+        messages=[{"role": "user", "content": f"Categorize: {expenses_text}"}]
+    )
+    return message.content[0].text
 
 def read_csv_file(filepath):
-    """Read expenses from CSV file"""
     expenses = []
-    try:
-        with open(filepath, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row:
-                    expenses.append(row)
-        return expenses
-    except FileNotFoundError:
-        print(f"Error: File '{filepath}' not found")
-        sys.exit(1)
+    with open(filepath, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            expenses.append(row)
+    return expenses
 
 def format_expenses(expenses):
-    """Format expenses for Claude"""
-    formatted = ""
-    for expense in expenses:
-        desc = expense.get('description', 'Unknown')
-        amount = expense.get('amount', '0')
-        formatted += f"{desc} - £{amount}\n"
-    return formatted
+    return "\n".join([f"{e.get('description')} - £{e.get('amount')}" for e in expenses])
 
-def export_to_json(expenses, result, filename="expenses_report.json"):
-    """Export results to JSON file"""
-    report = {
-        "expenses": [
-            {
-                "description": exp.get('description', 'Unknown'),
-                "amount": float(exp.get('amount', 0))
-            }
-            for exp in expenses
-        ],
-        "analysis": result,
-        "exported_to": filename
-    }
+def export_to_excel(expenses, analysis):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Expenses"
     
-    with open(filename, 'w') as f:
-        json.dump(report, f, indent=2)
+    ws['A1'] = "EXPENSE REPORT"
+    ws['A1'].font = Font(bold=True, size=14, color="FFFFFF")
+    ws['A1'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
     
-    return filename
+    ws['A2'] = f"Generated: {datetime.now().strftime('%d %B %Y')}"
+    
+    ws['A4'] = "Description"
+    ws['B4'] = "Amount"
+    for col in ['A', 'B']:
+        ws[f'{col}4'].fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+        ws[f'{col}4'].font = Font(bold=True)
+    
+    row = 5
+    total = 0
+    for exp in expenses:
+        amount = float(exp.get('amount', 0))
+        ws[f'A{row}'] = exp.get('description')
+        ws[f'B{row}'] = amount
+        ws[f'B{row}'].number_format = '£#,##0.00'
+        total += amount
+        row += 1
+    
+    ws[f'A{row}'] = "TOTAL"
+    ws[f'B{row}'] = total
+    ws[f'B{row}'].number_format = '£#,##0.00'
+    ws[f'B{row}'].fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+    
+    ws.column_dimensions['A'].width = 25
+    ws.column_dimensions['B'].width = 15
+    
+    wb.save("expense_report.xlsx")
+    return "expense_report.xlsx"
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        csv_file = sys.argv[1]
-        print(f"Reading expenses from {csv_file}...")
-        expenses = read_csv_file(csv_file)
-        expenses_text = format_expenses(expenses)
-    else:
-        expenses = [
-            {'description': 'Uber', 'amount': '12.50'},
-            {'description': 'Lunch at Pret', 'amount': '8.99'},
-            {'description': 'Coffee', 'amount': '3.50'},
-            {'description': 'Train', 'amount': '45.00'}
-        ]
-        expenses_text = format_expenses(expenses)
-        print("Using sample expenses")
-    
-    print("\nAnalyzing expenses...\n")
-    result = categorize_expenses(expenses_text)
+    expenses = read_csv_file(sys.argv[1]) if len(sys.argv) > 1 else [{'description': 'Uber', 'amount': '12.50'}, {'description': 'Lunch', 'amount': '8.99'}]
+    text = format_expenses(expenses)
+    print("Analyzing...\n")
+    result = categorize_expenses(text)
     print(result)
-    
-    # Export to JSON
-    json_file = export_to_json(expenses, result)
-    print(f"\n✓ Exported to {json_file}")
+    file = export_to_excel(expenses, result)
+    print(f"\n✓ Excel report created: {file}")
